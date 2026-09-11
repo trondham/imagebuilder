@@ -1,12 +1,24 @@
-# Pinned to the newest releases that still support Python 3.9, the floor the CI
-# matrix tests. Three packages are held back by that floor: keystoneauth1 5.12
-# requires 3.10 and 5.15 requires 3.11, python-glanceclient 4.9 requires 3.10
-# and 4.13 requires 3.11, openstacksdk 4.6 requires 3.10 and 4.14 requires
-# 3.11. Raising the floor to 3.11 would allow keystoneauth1 5.17.0,
-# python-glanceclient 4.13.0 and openstacksdk 4.20.0.
+# Pinned for Python 3.9, the stock interpreter on EL9. Three packages are
+# capped by that floor: keystoneauth1 5.12 requires 3.10 and 5.15 requires
+# 3.11, python-glanceclient 4.9 requires 3.10 and 4.13 requires 3.11,
+# openstacksdk 4.6 requires 3.10 and 4.14 requires 3.11.
+#
+# This is the combination OpenStack itself sanctions for 3.9: the 2025.2
+# upper-constraints pin openstacksdk 4.5.0 and python-glanceclient 4.8.0 for
+# python_version=='3.9', and everything here meets or exceeds the 2025.1
+# constraints.
 keystoneauth1==5.11.1
 python-novaclient==18.13.1
 python-glanceclient==4.8.0
 openstacksdk==4.5.0
 cryptography==50.0.1
 pbr==7.0.3
+
+# On Python 3.11 or newer, comment out the three capped pins above and
+# uncomment these. python-novaclient, cryptography and pbr are already current
+# and stay as they are. See DEVELOPMENT.md for installing a newer interpreter
+# on EL9 without waiting for EL10.
+#
+# keystoneauth1==5.17.0
+# python-glanceclient==4.13.0
+# openstacksdk==4.20.0
