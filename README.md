@@ -21,8 +21,14 @@ Pull requests are welcome!
 * [keystoneauth](https://github.com/openstack/keystoneauth)
 * [python-novaclient](https://github.com/openstack/python-novaclient)
 * [python-glanceclient](https://github.com/openstack/python-glanceclient)
-* [Packer](https://packer.io)
+* [Packer](https://packer.io) 1.7 or newer
 * OpenSSL command line tool
+
+Packer no longer ships with the OpenStack builder built in, so imagebuilder runs
+`packer init` before every build to install the
+[openstack plugin](https://github.com/hashicorp/packer-plugin-openstack). This
+needs network access the first time; afterwards the plugin is cached under
+`$HOME/.config/packer/plugins`.
 
 
 ### Installation
@@ -90,6 +96,12 @@ Your config file could like this:
 template_dir = /home/user/.imagebuilder
 download_dir = /tmp/images
 ```
+
+`template_dir` must contain `template.pkr.hcl` along with the `scripts/`
+directory it refers to. A legacy JSON template named `template` is still picked
+up if no `template.pkr.hcl` is present, but Packer cannot install plugins for it
+— run `packer plugins install github.com/hashicorp/openstack` yourself, or
+migrate the template with `packer hcl2_upgrade template`.
 
 ### Provision scripts
 A provision script is (when using imagebuilder) simply a shell script that will

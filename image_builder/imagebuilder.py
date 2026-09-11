@@ -103,19 +103,34 @@ and try again.""")
                                template_dir,
                                download_dir)
 
+        # Everything that can fail without creating anything in OpenStack is
+        # done first, so a bad template or network name doesn't leave a
+        # security group and a keypair behind
+        template_path = build.find_template()
+        if not template_path:
+            helpers.clean_tmp_files(build.tmp_dir)
+            sys.exit(1)
+
+        network_id = build.find_network_id(network_name)
+
+        if not network_id:
+            helpers.clean_tmp_files(build.tmp_dir)
+            sys.exit(1)
+
+        logging.info('Installing Packer plugins...')
+        if build.run_packer_init(template_path) != 0:
+            logging.info('Failed to install Packer plugins')
+            helpers.clean_tmp_files(build.tmp_dir)
+            sys.exit(1)
+
         logging.info('Creating Packer security group...')
         secgroup_name, secgroup_id = build.create_security_group()
 
         logging.info('Creating Packer keypair...')
         key_name, keypair_id = build.create_keypairs()
 
-        network_id = build.find_network_id(network_name)
-
-        if not network_id:
-            sys.exit(1)
-
         logging.info('Running Packer...')
-        exitcode = build.run_packer(secgroup_name, key_name, network_id)
+        exitcode = build.run_packer(template_path, secgroup_name, key_name, network_id)
         if exitcode == 0:
             artifact_id = build.parse_manifest()
             logging.info("Successfully created image id %s" % artifact_id)
