@@ -27,7 +27,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest
+          # ruff is pinned: 0.16.0 widened the default rule set, which flags a
+          # lot of pre-existing style in this repo. Bump deliberately.
+          pip install 'ruff==0.15.22' pytest
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Lint with ruff
         run: |
