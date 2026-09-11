@@ -2,5 +2,5 @@
 keystoneauth1
 python-novaclient
 python-glanceclient
-python-neutronclient
+openstacksdk
 python-openstackclient

@@ -48,7 +48,7 @@ selects the method, `sys.argv[2:]` is parsed by that method's own parser, and `b
 1. `helpers.make_tmp_dir()` — a `tempfile.mkdtemp(prefix='imagebuilder-')` holding the SSH keypair and
    Packer's manifest; everything in the flow is scoped to it.
 2. `find_template()` — locates `template.pkr.hcl` in `template_dir`.
-3. `find_network_id()` — resolves the network name (default `Dualstack`) to an id via neutron.
+3. `find_network_id()` — resolves the network name (default `Dualstack`) to an id via openstacksdk.
 4. `run_packer_init()` — `packer init`, which installs the openstack plugin.
 
    Steps 2–4 deliberately run *before* anything is created in OpenStack: each can fail on bad user
@@ -65,7 +65,10 @@ selects the method, `sys.argv[2:]` is parsed by that method's own parser, and `b
    Glance**), optional `--purge-source`, then `cleanup()` + `clean_tmp_files()`.
 
 Three OpenStack clients are used side by side, each region-scoped from the same keystone session:
-nova (keypairs), neutron (security groups, networks), glance (image delete). Cleanup is not
+novaclient (keypairs), an openstacksdk `Connection` (security groups, networks), glanceclient (image
+delete). Note `self.conn` holds the connection rather than the `conn.network` proxy, because touching
+a proxy authenticates and discovers endpoints — the constructor is deliberately free of network
+traffic. Cleanup is not
 signal-safe — if the process dies mid-build the `imagebuilder-*` security group and keypair are
 orphaned and must be deleted by hand.
 

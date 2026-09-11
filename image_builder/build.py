@@ -5,7 +5,7 @@ import subprocess
 import time
 import uuid
 from novaclient import client as novaclient
-from neutronclient.v2_0 import client as neutronclient
+from openstack.connection import Connection
 from glanceclient import Client as glanceclient
 from .helpers import Helpers as helpers
 
@@ -32,13 +32,16 @@ class BuildFunctions(object):
         self.download_dir = download_dir
         self.tmp_dir = helpers.make_tmp_dir()
         self.nova = novaclient.Client("2", session=session, region_name=region)
-        self.neutron = neutronclient.Client(session=session, region_name=region)
+        # Only the connection is built here. Reaching for a proxy such as
+        # conn.network authenticates and discovers endpoints, so that is left
+        # to the call sites to keep this constructor free of network traffic
+        self.conn = Connection(session=session, region_name=region)
         self.glance = glanceclient('2', session=session, region_name=region)
 
     def cleanup(self, secgroup_id, keypair_id):
         """Cleans up the mess we've made"""
         logging.info('Removing temporary security group...')
-        self.neutron.delete_security_group(secgroup_id)
+        self.conn.network.delete_security_group(secgroup_id)
         logging.info('Removing temporary keypair...')
         self.nova.keypairs.delete(key=keypair_id)
 
@@ -59,39 +62,19 @@ class BuildFunctions(object):
     def create_security_group(self):
         """Creates a temporary security group"""
         secgroup_name = "imagebuilder-" + str(uuid.uuid4().hex)
-        # pylint: disable=line-too-long
-        secgroup = self.neutron.create_security_group(body={
-            'security_group':
-            {
-                'name': secgroup_name,
-                'description': 'Temporary security group for image building'
-            }
-        })
-        secgroup_id = secgroup['security_group']['id']
+        secgroup = self.conn.network.create_security_group(
+            name=secgroup_name,
+            description='Temporary security group for image building')
         logging.info('Creating rule allowing SSH traffic...')
-        self.neutron.create_security_group_rule(body={
-            'security_group_rule':
-            {
-                'security_group_id': secgroup_id,
-                'direction': 'ingress',
-                'protocol': 'tcp',
-                'port_range_min': 22,
-                'port_range_max': 22,
-                'ethertype': 'IPv4'
-            }
-        })
-        self.neutron.create_security_group_rule(body={
-            'security_group_rule':
-            {
-                'security_group_id': secgroup_id,
-                'direction': 'ingress',
-                'protocol': 'tcp',
-                'port_range_min': 22,
-                'port_range_max': 22,
-                'ethertype': 'IPv6'
-            }
-        })
-        return secgroup_name, secgroup_id
+        for ethertype in ('IPv4', 'IPv6'):
+            self.conn.network.create_security_group_rule(
+                security_group_id=secgroup.id,
+                direction='ingress',
+                protocol='tcp',
+                port_range_min=22,
+                port_range_max=22,
+                ethertype=ethertype)
+        return secgroup_name, secgroup.id
 
     def delete_image(self, image_id):
         logging.info('Removing image %s' % image_id)
@@ -124,9 +107,11 @@ class BuildFunctions(object):
         return exitcode
 
     def find_network_id(self, name):
-        networks = self.neutron.list_networks(name=name)
-        if networks['networks']:
-            network_id = networks['networks'][0]['id']
+        # networks() rather than find_network(), which raises on a duplicate
+        # name where this has always just taken the first match
+        network = next(self.conn.network.networks(name=name), None)
+        if network:
+            network_id = network.id
             logging.info("Found network %s with id %s" % (name, network_id))
         else:
             network_id = False
