@@ -1,6 +1,13 @@
-keystoneauth1==4.3.1
-python-novaclient==17.4.0
-python-glanceclient==3.3.0
-python-neutronclient==7.3.0
-cryptography==46.0.7
-pbr==5.11.1
+# Pinned to the newest releases that still support Python 3.9, the floor the CI
+# matrix tests. Two packages are held back by that floor: keystoneauth1 5.12
+# requires 3.10 and 5.15 requires 3.11, python-glanceclient 4.9 requires 3.10
+# and 4.13 requires 3.11. Raising the floor to 3.11 would allow keystoneauth1
+# 5.17.0 and python-glanceclient 4.13.0. Everything else is already current.
+keystoneauth1==5.11.1
+python-novaclient==18.13.1
+python-glanceclient==4.8.0
+# Deprecated upstream in favour of openstacksdk, which this already pulls in as
+# a dependency. The bindings still work but are slated for removal.
+python-neutronclient==14.0.0
+cryptography==50.0.1
+pbr==7.0.3
