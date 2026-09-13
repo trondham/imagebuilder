@@ -69,9 +69,144 @@ def configure_logging(args):
         logging.basicConfig(format="%(message)s", level=logging.WARNING)
 
 
+def resolve_directory(config, env_var, option):
+    """Finds a configured directory, with the environment variable winning"""
+    if env_var in os.environ:
+        return os.environ[env_var]
+    try:
+        return config.get('main', option)
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        print(f"Failed to read {option} from config", file=sys.stderr)
+        sys.exit(1)
+
+
+def image_properties(args):
+    """Hardware properties to set on the uploaded image"""
+    properties = {'hw_rng_model': 'virtio'}
+    if not args.no_scsi_mode:
+        properties['hw_disk_bus'] = 'scsi'
+        properties['hw_scsi_model'] = 'virtio-scsi'
+    if args.efi:
+        properties['hw_firmware_type'] = 'uefi'
+        properties['hw_machine_type'] = 'q35'
+    return properties
+
+
+def run_build(args, ib_session, region, template_dir, download_dir):
+    """Builds an image with Packer, returning the exit code"""
+    build = BuildFunctions(ib_session,
+                           region,
+                           image_name=args.name,
+                           avail_zone=args.availability_zone,
+                           flavor=args.flavor,
+                           source_image=args.source_image,
+                           ssh_user=args.ssh_username,
+                           provision_script=args.provision_script,
+                           template_dir=template_dir,
+                           download_dir=download_dir)
+
+    # Everything that can fail without creating anything in OpenStack is done
+    # first, so a bad template or network name doesn't leave a security group
+    # and a keypair behind
+    template_path = build.find_template()
+    if not template_path:
+        helpers.clean_tmp_files(build.tmp_dir)
+        return 1
+
+    network_id = build.find_network_id(args.network_name)
+    if not network_id:
+        helpers.clean_tmp_files(build.tmp_dir)
+        return 1
+
+    log.info('Installing Packer plugins...')
+    if build.run_packer_init(template_path) != 0:
+        log.error('Failed to install Packer plugins')
+        helpers.clean_tmp_files(build.tmp_dir)
+        return 1
+
+    log.info('Creating Packer security group...')
+    secgroup_name, secgroup_id = build.create_security_group()
+
+    keypair_id = None
+    exitcode = 1
+
+    # From here on something exists in OpenStack, so the rest runs under a
+    # finally. An interrupt during the build, or any exception on the way, has
+    # to still remove the security group and the keypair rather than leave them
+    # behind in the project
+    try:
+        log.info('Creating Packer keypair...')
+        key_name, keypair_id = build.create_keypairs()
+        if key_name is None:
+            return 1
+
+        log.info('Running Packer...')
+        exitcode = build.run_packer(template_path, secgroup_name, key_name,
+                                    network_id)
+        if exitcode == 0:
+            artifact_id = build.parse_manifest()
+            if artifact_id is None:
+                exitcode = 1
+            else:
+                log.info("Successfully created image id %s", artifact_id)
+                if args.download:
+                    exitcode = build.download_image(artifact_id)
+        else:
+            log.error('Build failed')
+            exitcode = 1
+
+        if args.purge_source:
+            if build.delete_image(args.source_image):
+                log.info('Successfully deleted source image')
+            else:
+                log.error('Failed to delete source image')
+                exitcode = 1
+    finally:
+        log.info('Cleaning up...')
+        build.cleanup(secgroup_id, keypair_id)
+        helpers.clean_tmp_files(build.tmp_dir)
+
+    return exitcode
+
+
+def run_bootstrap(args, ib_session, region):
+    """Uploads an upstream cloud image to Glance, returning the exit code
+
+    On success the new image id is the only thing on stdout, so the result can
+    be piped straight into a build.
+    """
+    bootstrap = BootstrapFunctions(ib_session, region)
+    try:
+        log.info('Downloading image...')
+        image_file = bootstrap.download_and_check(args.url,
+                                                  args.checksum_url,
+                                                  args.checksum_digest)
+        if not image_file:
+            log.error('Downloading failed.')
+            return 1
+
+        log.info('Uploading image to Glance...')
+        image_id = bootstrap.create_glance_image(image_file,
+                                                 args.name,
+                                                 args.disk_format,
+                                                 args.min_disk,
+                                                 args.min_ram,
+                                                 image_properties(args))
+        if not image_id:
+            log.error('Uploading failed.')
+            return 1
+
+        sys.stdout.write(image_id)
+        return 0
+    finally:
+        log.info('Cleaning up...')
+        helpers.clean_tmp_files(bootstrap.tmp_dir)
+
+
 def main():
     commands = Commands()
-    configure_logging(commands.build_args or commands.bootstrap_args)
+    args = commands.build_args or commands.bootstrap_args
+    configure_logging(args)
 
     try:
         rc = get_openstack_rc()
@@ -84,159 +219,15 @@ and try again.""", file=sys.stderr)
 
     ib_session = auth(rc)
     region = rc['region_name']
-
     config = Config().config
 
-    if "IB_TEMPLATE_DIR" in os.environ:
-        template_dir = os.environ['IB_TEMPLATE_DIR']
-    else:
-        try:
-            template_dir = config.get('main', 'template_dir')
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            print("Failed to read template_dir from config", file=sys.stderr)
-            sys.exit(1)
-
-    if "IB_DOWNLOAD_DIR" in os.environ:
-        download_dir = os.environ['IB_DOWNLOAD_DIR']
-    else:
-        try:
-            download_dir = config.get('main', 'download_dir')
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            print("Failed to read download_dir from config", file=sys.stderr)
-            sys.exit(1)
-
     if commands.build_args:
-        image_name = commands.build_args.name
-        avail_zone = commands.build_args.availability_zone
-        flavor = commands.build_args.flavor
-        source_image = commands.build_args.source_image
-        sshuser = commands.build_args.ssh_username
-        provision_script = commands.build_args.provision_script
-        network_name = commands.build_args.network_name
+        # Only the build needs these, so only the build has to have them
+        # configured
+        template_dir = resolve_directory(config, 'IB_TEMPLATE_DIR', 'template_dir')
+        download_dir = resolve_directory(config, 'IB_DOWNLOAD_DIR', 'download_dir')
+        sys.exit(run_build(args, ib_session, region, template_dir, download_dir))
 
-        build = BuildFunctions(ib_session,
-                               region,
-                               image_name=image_name,
-                               avail_zone=avail_zone,
-                               flavor=flavor,
-                               source_image=source_image,
-                               ssh_user=sshuser,
-                               provision_script=provision_script,
-                               template_dir=template_dir,
-                               download_dir=download_dir)
-
-        # Everything that can fail without creating anything in OpenStack is
-        # done first, so a bad template or network name doesn't leave a
-        # security group and a keypair behind
-        template_path = build.find_template()
-        if not template_path:
-            helpers.clean_tmp_files(build.tmp_dir)
-            sys.exit(1)
-
-        network_id = build.find_network_id(network_name)
-
-        if not network_id:
-            helpers.clean_tmp_files(build.tmp_dir)
-            sys.exit(1)
-
-        log.info('Installing Packer plugins...')
-        if build.run_packer_init(template_path) != 0:
-            log.error('Failed to install Packer plugins')
-            helpers.clean_tmp_files(build.tmp_dir)
-            sys.exit(1)
-
-        log.info('Creating Packer security group...')
-        secgroup_name, secgroup_id = build.create_security_group()
-
-        keypair_id = None
-        exitcode = 1
-
-        # From here on something exists in OpenStack, so the rest runs under a
-        # finally. An interrupt during the build, or any exception on the way,
-        # has to still remove the security group and the keypair rather than
-        # leave them behind in the project
-        try:
-            log.info('Creating Packer keypair...')
-            key_name, keypair_id = build.create_keypairs()
-            if key_name is None:
-                sys.exit(1)
-
-            log.info('Running Packer...')
-            exitcode = build.run_packer(template_path, secgroup_name, key_name, network_id)
-            if exitcode == 0:
-                artifact_id = build.parse_manifest()
-                if artifact_id is None:
-                    exitcode = 1
-                else:
-                    log.info("Successfully created image id %s", artifact_id)
-                    if commands.build_args.download:
-                        exitcode = build.download_image(artifact_id)
-            else:
-                log.error('Build failed')
-                exitcode = 1
-
-            if commands.build_args.purge_source:
-                if build.delete_image(source_image):
-                    log.info('Successfully deleted source image')
-                else:
-                    log.error('Failed to delete source image')
-                    exitcode = 1
-        finally:
-            log.info('Cleaning up...')
-            build.cleanup(secgroup_id, keypair_id)
-            helpers.clean_tmp_files(build.tmp_dir)
-
-        sys.exit(exitcode)
-
-    if commands.bootstrap_args:
-        image_name = commands.bootstrap_args.name
-        url = commands.bootstrap_args.url
-        checksum_url = commands.bootstrap_args.checksum_url
-        checksum_digest = commands.bootstrap_args.checksum_digest
-        disk_format = commands.bootstrap_args.disk_format
-        min_disk = commands.bootstrap_args.min_disk
-        min_ram = commands.bootstrap_args.min_ram
-
-        properties = {}
-
-        if not commands.bootstrap_args.no_scsi_mode:
-            properties['hw_disk_bus'] = 'scsi'
-            properties['hw_scsi_model'] = 'virtio-scsi'
-
-        if commands.bootstrap_args.efi:
-            properties['hw_firmware_type'] = 'uefi'
-            properties['hw_machine_type'] = 'q35'
-
-        properties['hw_rng_model'] = 'virtio'
-
-        bootstrap = BootstrapFunctions(ib_session, region)
-        log.info('Downloading image...')
-        image_file = bootstrap.download_and_check(url, checksum_url, checksum_digest)
-
-        if image_file:
-            log.info('Uploading image to Glance...')
-            image_id = bootstrap.create_glance_image(image_file,
-                                                     image_name,
-                                                     disk_format,
-                                                     min_disk,
-                                                     min_ram,
-                                                     properties)
-        else:
-            log.error('Downloading failed.')
-            log.info('Cleaning up...')
-            helpers.clean_tmp_files(bootstrap.tmp_dir)
-            sys.exit(1)
-
-        if image_id:
-            sys.stdout.write(image_id)
-        else:
-            log.error('Uploading failed.')
-            log.info('Cleaning up...')
-            helpers.clean_tmp_files(bootstrap.tmp_dir)
-            sys.exit(1)
-
-        log.info('Cleaning up...')
-        helpers.clean_tmp_files(bootstrap.tmp_dir)
-        sys.exit(0)
+    sys.exit(run_bootstrap(args, ib_session, region))
 
 # vim: set ft=python3

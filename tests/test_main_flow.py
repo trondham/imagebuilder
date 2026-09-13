@@ -10,6 +10,7 @@ import pytest
 from conftest import FULL_OPENRC
 
 import image_builder.imagebuilder as ib
+from image_builder.parsecommands import Commands
 
 
 @pytest.fixture
@@ -127,3 +128,83 @@ def test_unusable_manifest_fails_the_build(run_build):
     code, raised, calls = run_build(manifest=None)
     assert code == 1
     assert cleaned(calls)
+
+
+# The split made these reachable without driving the whole of main()
+
+def test_image_properties_defaults_to_scsi_and_rng():
+    args = Commands(['bootstrap', '-a', 'z', '-u', 'https://x/i.qcow2', '-n', 'n',
+                     '-r', '768', '-d', '8', '-f', 'qcow2']).bootstrap_args
+    props = ib.image_properties(args)
+    assert props == {'hw_rng_model': 'virtio', 'hw_disk_bus': 'scsi',
+                     'hw_scsi_model': 'virtio-scsi'}
+
+
+def test_image_properties_without_scsi():
+    args = Commands(['bootstrap', '-a', 'z', '-u', 'https://x/i.qcow2', '-n', 'n',
+                     '-r', '768', '-d', '8', '-f', 'qcow2', '-s']).bootstrap_args
+    props = ib.image_properties(args)
+    assert 'hw_disk_bus' not in props
+    assert props['hw_rng_model'] == 'virtio'
+
+
+def test_image_properties_with_efi():
+    args = Commands(['bootstrap', '-a', 'z', '-u', 'https://x/i.qcow2', '-n', 'n',
+                     '-r', '768', '-d', '8', '-f', 'qcow2', '-e']).bootstrap_args
+    props = ib.image_properties(args)
+    assert props['hw_firmware_type'] == 'uefi'
+    assert props['hw_machine_type'] == 'q35'
+
+
+class FakeBootstrap:
+    """Records what run_bootstrap asked of it."""
+
+    instances = []
+
+    def __init__(self, *a, **k):
+        self.tmp_dir = tempfile.mkdtemp(prefix='bootflow-')
+        self.downloaded = None
+        self.uploaded = None
+        FakeBootstrap.instances.append(self)
+
+    def download_and_check(self, url, checksum_url, digest):
+        self.downloaded = (url, checksum_url, digest)
+        return None if url.endswith('fail') else os.path.join(self.tmp_dir, 'img.qcow2')
+
+    def create_glance_image(self, *a):
+        self.uploaded = a
+        return None if a[1] == 'upload-fail' else 'new-image-uuid'
+
+
+@pytest.fixture
+def run_bootstrap(clean_env, monkeypatch, capsys):
+    def run(name='img', url='https://example.com/i.qcow2'):
+        FakeBootstrap.instances = []
+        monkeypatch.setattr(ib, 'BootstrapFunctions', FakeBootstrap)
+        args = Commands(['bootstrap', '-a', 'z', '-u', url, '-n', name,
+                         '-r', '768', '-d', '8', '-f', 'qcow2']).bootstrap_args
+        code = ib.run_bootstrap(args, object(), 'bgo')
+        return code, capsys.readouterr(), FakeBootstrap.instances[0]
+
+    return run
+
+
+def test_bootstrap_writes_only_the_image_id_to_stdout(run_bootstrap):
+    code, captured, fake = run_bootstrap()
+    assert code == 0
+    assert captured.out == 'new-image-uuid'
+    assert not os.path.exists(fake.tmp_dir)          # cleaned up
+
+
+def test_bootstrap_download_failure_exits_one_and_cleans_up(run_bootstrap):
+    code, captured, fake = run_bootstrap(url='https://example.com/fail')
+    assert code == 1
+    assert captured.out == ''
+    assert not os.path.exists(fake.tmp_dir)
+
+
+def test_bootstrap_upload_failure_exits_one_and_cleans_up(run_bootstrap):
+    code, captured, fake = run_bootstrap(name='upload-fail')
+    assert code == 1
+    assert captured.out == ''
+    assert not os.path.exists(fake.tmp_dir)
