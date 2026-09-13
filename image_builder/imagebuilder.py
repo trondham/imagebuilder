@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 import logging
 import os
 import sys
@@ -10,6 +8,8 @@ from .build import BuildFunctions
 from .bootstrap import BootstrapFunctions
 from .config import Config
 from .helpers import Helpers as helpers
+
+log = logging.getLogger(__name__)
 
 class ImageBuilder(object):
     @staticmethod
@@ -55,8 +55,26 @@ class ImageBuilder(object):
         env_var['cacert'] = os.environ.get('OS_CACERT')
         return env_var
 
+def configure_logging(args):
+    """Sets up logging once for whichever subcommand was chosen
+
+    Default is WARNING rather than silence: progress stays hidden without -v,
+    but a failure now says so instead of the command simply exiting non-zero.
+    --debug wins when both flags are given, which is the way round people
+    expect.
+    """
+    if args.debug:
+        logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s",
+                            level=logging.DEBUG)
+    elif args.verbose:
+        logging.basicConfig(format="%(message)s", level=logging.INFO)
+    else:
+        logging.basicConfig(format="%(message)s", level=logging.WARNING)
+
+
 def main():
     commands = Commands()
+    configure_logging(commands.build_args or commands.bootstrap_args)
     imagebuilder = ImageBuilder()
 
     try:
@@ -100,11 +118,6 @@ and try again.""" % missing.args[0], file=sys.stderr)
         provision_script = commands.build_args.provision_script
         network_name = commands.build_args.network_name
 
-        if commands.build_args.verbose:
-            logging.basicConfig(format="%(message)s", level=logging.INFO)
-        elif commands.build_args.debug:
-            logging.basicConfig(level=logging.DEBUG)
-
         build = BuildFunctions(ib_session,
                                region,
                                image_name,
@@ -130,13 +143,13 @@ and try again.""" % missing.args[0], file=sys.stderr)
             helpers.clean_tmp_files(build.tmp_dir)
             sys.exit(1)
 
-        logging.info('Installing Packer plugins...')
+        log.info('Installing Packer plugins...')
         if build.run_packer_init(template_path) != 0:
-            logging.info('Failed to install Packer plugins')
+            log.error('Failed to install Packer plugins')
             helpers.clean_tmp_files(build.tmp_dir)
             sys.exit(1)
 
-        logging.info('Creating Packer security group...')
+        log.info('Creating Packer security group...')
         secgroup_name, secgroup_id = build.create_security_group()
 
         keypair_id = None
@@ -147,33 +160,33 @@ and try again.""" % missing.args[0], file=sys.stderr)
         # has to still remove the security group and the keypair rather than
         # leave them behind in the project
         try:
-            logging.info('Creating Packer keypair...')
+            log.info('Creating Packer keypair...')
             key_name, keypair_id = build.create_keypairs()
             if key_name is None:
                 sys.exit(1)
 
-            logging.info('Running Packer...')
+            log.info('Running Packer...')
             exitcode = build.run_packer(template_path, secgroup_name, key_name, network_id)
             if exitcode == 0:
                 artifact_id = build.parse_manifest()
                 if artifact_id is None:
                     exitcode = 1
                 else:
-                    logging.info("Successfully created image id %s" % artifact_id)
+                    log.info("Successfully created image id %s", artifact_id)
                     if commands.build_args.download:
                         exitcode = build.download_image(artifact_id)
             else:
-                logging.info('Build failed')
+                log.error('Build failed')
                 exitcode = 1
 
             if commands.build_args.purge_source:
                 if build.delete_image(source_image):
-                    logging.info('Successfully deleted source image')
+                    log.info('Successfully deleted source image')
                 else:
-                    logging.info('Failed to delete source image')
+                    log.error('Failed to delete source image')
                     exitcode = 1
         finally:
-            logging.info('Cleaning up...')
+            log.info('Cleaning up...')
             build.cleanup(secgroup_id, keypair_id)
             helpers.clean_tmp_files(build.tmp_dir)
 
@@ -181,18 +194,12 @@ and try again.""" % missing.args[0], file=sys.stderr)
 
     if commands.bootstrap_args:
         image_name = commands.bootstrap_args.name
-        avail_zone = commands.bootstrap_args.availability_zone
         url = commands.bootstrap_args.url
         checksum_url = commands.bootstrap_args.checksum_url
         checksum_digest = commands.bootstrap_args.checksum_digest
         disk_format = commands.bootstrap_args.disk_format
         min_disk = commands.bootstrap_args.min_disk
         min_ram = commands.bootstrap_args.min_ram
-
-        if commands.bootstrap_args.verbose:
-            logging.basicConfig(format="%(message)s", level=logging.INFO)
-        elif commands.bootstrap_args.debug:
-            logging.basicConfig(level=logging.DEBUG)
 
         properties = {}
 
@@ -206,14 +213,12 @@ and try again.""" % missing.args[0], file=sys.stderr)
 
         properties['hw_rng_model'] = 'virtio'
 
-        bootstrap = BootstrapFunctions(ib_session,
-                                       region,
-                                       avail_zone)
-        logging.info('Downloading image...')
+        bootstrap = BootstrapFunctions(ib_session, region)
+        log.info('Downloading image...')
         image_file = bootstrap.download_and_check(url, checksum_url, checksum_digest)
 
         if image_file:
-            logging.info('Uploading image to Glance...')
+            log.info('Uploading image to Glance...')
             image_id = bootstrap.create_glance_image(image_file,
                                                      image_name,
                                                      disk_format,
@@ -221,20 +226,20 @@ and try again.""" % missing.args[0], file=sys.stderr)
                                                      min_ram,
                                                      properties)
         else:
-            logging.info('Downloading failed.')
-            logging.info('Cleaning up...')
+            log.error('Downloading failed.')
+            log.info('Cleaning up...')
             helpers.clean_tmp_files(bootstrap.tmp_dir)
             sys.exit(1)
 
         if image_id:
             sys.stdout.write(image_id)
         else:
-            logging.info('Uploading failed.')
-            logging.info('Cleaning up...')
+            log.error('Uploading failed.')
+            log.info('Cleaning up...')
             helpers.clean_tmp_files(bootstrap.tmp_dir)
             sys.exit(1)
 
-        logging.info('Cleaning up...')
+        log.info('Cleaning up...')
         helpers.clean_tmp_files(bootstrap.tmp_dir)
         sys.exit(0)
 

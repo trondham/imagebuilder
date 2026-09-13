@@ -18,16 +18,25 @@ This fork's `origin` is `trondham/imagebuilder`; `upstream` is `norcams/imagebui
 ruff check --select=E9,F63,F7,F82 --target-version=py39 .
 ruff check --target-version=py39 .
 
+# Tests — CI runs these too; ruff is pinned to 0.15.22 and pytest to 8.4.2
+pytest -q
+pytest tests/test_main_flow.py -q          # a single file
+pytest -k "cleanup" -q                     # a single case
+
 # Dev install (see DEVELOPMENT.md)
 python3 -m venv . && source bin/activate
 pip install -r requirements.txt
-python setup.py develop
+pip install -e .
 
 # Run without installing
 ./imagebuilder <command>          # wrapper around image_builder.imagebuilder:main
 ```
 
-There is no test suite. CI installs `pytest` but never invokes it; do not claim tests pass.
+Tests live in `tests/` and use stand-in OpenStack clients (`tests/conftest.py`) plus a fake HTTP
+layer, so they need no credentials and touch no network. `test_main_flow.py` drives `main()` itself
+with a fake `BuildFunctions` — that is where the cleanup-on-failure guarantees are pinned down.
+
+Packaging metadata and the console script live in `pyproject.toml`; there is no `setup.py`.
 
 Running any command requires OpenStack credentials in the environment (`source keystone_rc.sh`) —
 `get_openstack_rc()` reads `OS_USERNAME`, `OS_PROJECT_NAME`, `OS_PASSWORD`, `OS_AUTH_URL`,

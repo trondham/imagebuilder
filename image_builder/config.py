@@ -14,10 +14,6 @@ class Config(object):
             self.config_file_list.append(os.path.join(path, "config"))
         self.config = self.__read_config()
 
-    def show_config(self):
-        # Not implemented yet
-        pass
-
     def __read_config(self):
         config = configparser.ConfigParser()
         config.read(self.config_file_list)

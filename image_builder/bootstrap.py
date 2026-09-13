@@ -4,6 +4,8 @@ import urllib.request
 from openstack.connection import Connection
 from .helpers import Helpers as helpers
 
+log = logging.getLogger(__name__)
+
 # Blocking socket operations give up after this long. This is a per-read
 # timeout, not a limit on the whole transfer, so a large image is fine as long
 # as bytes keep arriving
@@ -15,10 +17,8 @@ MIN_IMAGE_BYTES = 1000
 class BootstrapFunctions(object):
     def __init__(self,
                  session,
-                 region,
-                 avail_zone):
+                 region):
         self.session = session
-        self.avail_zone = avail_zone
         self.tmp_dir = helpers.make_tmp_dir()
         self.conn = Connection(session=session, region_name=region)
 
@@ -56,7 +56,7 @@ class BootstrapFunctions(object):
         # Checked up front so a typo in -t fails now rather than after the
         # download has finished
         if checksum_url and not helpers.valid_digest(checksum_dig):
-            logging.info("Unknown checksum digest: %s" % checksum_dig)
+            log.error("Unknown checksum digest: %s", checksum_dig)
             return None
 
         req = urllib.request.Request(
@@ -79,7 +79,7 @@ class BootstrapFunctions(object):
         # header it is not obliged to send
         size = os.path.getsize(file_path)
         if size < MIN_IMAGE_BYTES:
-            logging.info("File is too small (%d bytes): %s" % (size, url))
+            log.error("File is too small (%d bytes): %s", size, url)
             os.remove(file_path)
             return None
 
@@ -93,12 +93,12 @@ class BootstrapFunctions(object):
                 'User-Agent':  user_agent
             }
         )
-        logging.info("Verifying checksum of %s..." % file_path)
+        log.info("Verifying checksum of %s...", file_path)
         response = urllib.request.urlopen(req, timeout=SOCKET_TIMEOUT)
         checksum_text = response.read().decode('utf-8', errors='replace')
         response.close()
-        logging.debug(checksum_text)
-        logging.debug("Checksum type is %s" % checksum_dig)
+        log.debug(checksum_text)
+        log.debug("Checksum type is %s", checksum_dig)
 
         actual = helpers.checksum_file(file_path, checksum_dig)
         expected = self.find_expected_checksum(checksum_text, file_name)
@@ -107,20 +107,20 @@ class BootstrapFunctions(object):
             # No entry naming this file. Fall back to the old behaviour of
             # looking for the hash anywhere in the file, which is weaker but
             # keeps working with checksum files that name things differently
-            logging.info("No entry for %s in %s, falling back to matching the "
-                         "hash anywhere in the file" % (file_name, checksum_url))
+            log.warning("No entry for %s in %s, falling back to matching the "
+                        "hash anywhere in the file", file_name, checksum_url)
             if actual in checksum_text.lower():
-                logging.info("Checksum ok: %s" % actual)
+                log.info("Checksum ok: %s", actual)
                 return file_path
-            logging.info("Checksum not found: %s" % actual)
+            log.error("Checksum not found: %s", actual)
             return None
 
         if actual == expected:
-            logging.info("Checksum ok: %s" % actual)
+            log.info("Checksum ok: %s", actual)
             return file_path
 
-        logging.info("Checksum mismatch for %s: expected %s, got %s"
-                     % (file_name, expected, actual))
+        log.error("Checksum mismatch for %s: expected %s, got %s",
+                  file_name, expected, actual)
         return None
 
     def create_glance_image(self, image_file, name, disk_format, min_disk,
@@ -141,8 +141,8 @@ class BootstrapFunctions(object):
                                                 disable_vendor_agent=False,
                                                 **properties)
         except Exception as error:
-            logging.info("Failed to upload %s: %s" % (image_file, error))
+            log.error("Failed to upload %s: %s", image_file, error)
             return None
-        logging.info("Successfully uploaded %s as image %s" % (image_file, name))
-        logging.debug(image)
+        log.info("Successfully uploaded %s as image %s", image_file, name)
+        log.debug(image)
         return image.id

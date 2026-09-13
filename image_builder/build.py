@@ -7,6 +7,8 @@ import uuid
 from openstack.connection import Connection
 from .helpers import Helpers as helpers
 
+log = logging.getLogger(__name__)
+
 class BuildFunctions(object):
     def __init__(self,
                  session,
@@ -42,17 +44,17 @@ class BuildFunctions(object):
         mask whatever actually went wrong.
         """
         if secgroup_id:
-            logging.info('Removing temporary security group...')
+            log.info('Removing temporary security group...')
             try:
                 self.conn.network.delete_security_group(secgroup_id)
             except Exception as error:
-                logging.info("Failed to remove security group %s: %s" % (secgroup_id, error))
+                log.warning("Failed to remove security group %s: %s", secgroup_id, error)
         if keypair_id:
-            logging.info('Removing temporary keypair...')
+            log.info('Removing temporary keypair...')
             try:
                 self.conn.compute.delete_keypair(keypair_id)
             except Exception as error:
-                logging.info("Failed to remove keypair %s: %s" % (keypair_id, error))
+                log.warning("Failed to remove keypair %s: %s", keypair_id, error)
 
     def create_keypairs(self):
         """Creates a temporary keypair"""
@@ -62,10 +64,10 @@ class BuildFunctions(object):
         # No shell: there is nothing here a shell is needed for, and letting
         # PATH find ssh-keygen beats hardcoding where it lives
         cmd = ['ssh-keygen', '-b', '521', '-t', 'ecdsa', '-N', '', '-f', keypath]
-        logging.debug(cmd)
+        log.debug(cmd)
         out = subprocess.call(cmd)                     # generate temporary ssh key
         if out:                                        # something went wrong with the key generation
-            logging.info("Failed to generate SSH key, ssh-keygen exited %s" % out)
+            log.error("Failed to generate SSH key, ssh-keygen exited %s", out)
             return None, None
         # read public key string and store into Openstack
         with open(keypath + ".pub", "r") as pubfile:
@@ -80,7 +82,7 @@ class BuildFunctions(object):
         secgroup = self.conn.network.create_security_group(
             name=secgroup_name,
             description='Temporary security group for image building')
-        logging.info('Creating rule allowing SSH traffic...')
+        log.info('Creating rule allowing SSH traffic...')
         for ethertype in ('IPv4', 'IPv6'):
             self.conn.network.create_security_group_rule(
                 security_group_id=secgroup.id,
@@ -93,13 +95,13 @@ class BuildFunctions(object):
 
     def delete_image(self, image_id):
         if image_id is None:
-            logging.info('No image to remove')
+            log.warning('No image to remove')
             return False
-        logging.info('Removing image %s' % image_id)
+        log.info("Removing image %s", image_id)
         try:
             self.conn.image.delete_image(image_id)
         except Exception as error:
-            logging.info("Removing image %s failed: %s" % (image_id, error))
+            log.error("Removing image %s failed: %s", image_id, error)
             return False
         return True
 
@@ -113,16 +115,16 @@ class BuildFunctions(object):
         timestr = time.strftime("%Y%m%d")
         filename = self.image_name + '-' + timestr + '.qcow2'
         target = os.path.join(self.download_dir, filename)
-        logging.info("Downloading image to %s..." % target)
+        log.info("Downloading image to %s...", target)
         try:
             with open(target, 'wb') as image_file:
                 self.conn.image.download_image(artifact_id, output=image_file)
         except Exception as error:
-            logging.info("Failed to download image %s: %s" % (artifact_id, error))
+            log.error("Failed to download image %s: %s", artifact_id, error)
             if os.path.exists(target):
                 os.remove(target)          # don't leave a half-written image behind
             return 1
-        logging.info('Download successful, deleting from Glance...')
+        log.info('Download successful, deleting from Glance...')
         self.delete_image(artifact_id)
         return 0
 
@@ -132,10 +134,10 @@ class BuildFunctions(object):
         network = next(self.conn.network.networks(name=name), None)
         if network:
             network_id = network.id
-            logging.info("Found network %s with id %s" % (name, network_id))
+            log.info("Found network %s with id %s", name, network_id)
         else:
             network_id = False
-            logging.info("Cannot find network %s" % name)
+            log.error("Cannot find network %s", name)
         return network_id
 
     def find_template(self):
@@ -149,13 +151,13 @@ class BuildFunctions(object):
             template_path = os.path.join(self.template_dir, name)
             if os.path.isfile(template_path):
                 if name == 'template':
-                    logging.info("Using legacy JSON template %s" % template_path)
-                    logging.info("Packer no longer bundles the openstack builder. "
-                                 "Install it manually with 'packer plugins install "
-                                 "github.com/hashicorp/openstack', or migrate to "
-                                 "template.pkr.hcl")
+                    log.warning("Using legacy JSON template %s", template_path)
+                    log.warning("Packer no longer bundles the openstack builder. "
+                                "Install it manually with 'packer plugins install "
+                                "github.com/hashicorp/openstack', or migrate to "
+                                "template.pkr.hcl")
                 return template_path
-        logging.info("No Packer template found in %s" % self.template_dir)
+        log.error("No Packer template found in %s", self.template_dir)
         return None
 
     def parse_manifest(self):
@@ -171,7 +173,7 @@ class BuildFunctions(object):
                 manifest = json.load(data_file)
             return manifest['builds'][0]['artifact_id']
         except (OSError, ValueError, KeyError, IndexError) as error:
-            logging.info("Failed to read the image id from %s: %s" % (manifest_path, error))
+            log.error("Failed to read the image id from %s: %s", manifest_path, error)
             return None
 
     def run_packer(self, template_path, secgroup_name, key_name, network_id):
@@ -201,7 +203,7 @@ class BuildFunctions(object):
                '-var', provision_script_var,
                '-var', manifest_path_var,
                template_path]
-        logging.debug(cmd)
+        log.debug(cmd)
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         with process.stdout:
             helpers.log_subprocess_output(process.stdout)
@@ -219,7 +221,7 @@ class BuildFunctions(object):
         if not template_path.endswith('.pkr.hcl'):
             return 0
         cmd = ['packer', 'init', template_path]
-        logging.debug(cmd)
+        log.debug(cmd)
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         with process.stdout:
             helpers.log_subprocess_output(process.stdout)

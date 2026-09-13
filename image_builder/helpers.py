@@ -3,18 +3,20 @@ import logging
 import shutil
 import tempfile
 
+log = logging.getLogger(__name__)
+
 class Helpers(object):
 
     @staticmethod
     def clean_tmp_files(tmp_dir):
         # Also called from a finally block, so failing to remove a scratch
         # directory must not be what the user ends up seeing
-        logging.info('Removing temporary directory with content...')
+        log.info('Removing temporary directory with content...')
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @staticmethod
     def make_tmp_dir():
-        logging.info('Creating a directory for temporary files...')
+        log.info('Creating a directory for temporary files...')
         tmp_dir = tempfile.mkdtemp(prefix='imagebuilder-')
         return tmp_dir
 
@@ -23,7 +25,7 @@ class Helpers(object):
         # Decoded, not repr'd: this is the build log the user watches, and
         # every line of it used to arrive looking like b'...\n'
         for line in iter(pipe.readline, b''):
-            logging.info(line.decode('utf-8', errors='replace').rstrip())
+            log.info(line.decode('utf-8', errors='replace').rstrip())
 
     @staticmethod
     def valid_digest(digest):
@@ -53,5 +55,5 @@ class Helpers(object):
             for block in iter(lambda: f.read(chunk_size), b''):
                 hasher.update(block)
         checksum = hasher.hexdigest()
-        logging.debug("hexdigest of %s is %s" % (file_path, checksum))
+        log.debug("hexdigest of %s is %s", file_path, checksum)
         return checksum

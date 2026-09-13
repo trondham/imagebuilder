@@ -9,10 +9,23 @@ cd imagebuilder
 virtualenv . -p /usr/bin/python3
 source bin/activate
 pip install --upgrade pip
-pip install --upgrade setuptools
-python setup.py develop
 pip install -r requirements.txt
+pip install -e .
 ```
+
+`pip install -e .` replaces the old `python setup.py develop`, which setuptools
+has deprecated. Package metadata and the console script live in
+`pyproject.toml`; there is no `setup.py` any more.
+
+## Tests
+
+``` bash
+pip install pytest
+pytest
+```
+
+They use stand-in OpenStack clients and a fake HTTP layer, so nothing reaches a
+cloud or the network and no credentials are needed. CI runs them on every push.
 
 ## Python version
 
