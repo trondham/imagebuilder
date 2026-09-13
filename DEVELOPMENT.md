@@ -18,8 +18,8 @@ pip install -r requirements.txt
 
 `requirements.txt` pins for Python 3.9, the stock interpreter on EL9. Red Hat
 maintains 3.9 for the full RHEL 9 life cycle, so it stays patched well past its
-upstream end of life, but three pins are capped by it: keystoneauth1,
-python-glanceclient and openstacksdk.
+upstream end of life, but two pins are capped by it: keystoneauth1 and
+openstacksdk.
 
 That floor is fine for OpenStack 2025.1, where 3.9 is the minimum supported
 runtime. 2025.2 raised the minimum to 3.10, and while its constraints still

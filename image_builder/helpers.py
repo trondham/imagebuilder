@@ -20,8 +20,22 @@ class Helpers(object):
 
     @staticmethod
     def log_subprocess_output(pipe):
+        # Decoded, not repr'd: this is the build log the user watches, and
+        # every line of it used to arrive looking like b'...\n'
         for line in iter(pipe.readline, b''):
-            logging.info('%r', line)
+            logging.info(line.decode('utf-8', errors='replace').rstrip())
+
+    @staticmethod
+    def valid_digest(digest):
+        """Whether hashlib knows this digest name
+
+        Used to reject a bad -t before spending a download on it.
+        """
+        try:
+            hashlib.new(digest.lower())
+        except (ValueError, TypeError):
+            return False
+        return True
 
     @staticmethod
     def checksum_file(file_path, digest='sha256', chunk_size=65536):
@@ -29,16 +43,15 @@ class Helpers(object):
         particularly large files.  Also ensures memory usage is kept to a
         minimum. Testing shows default is a pretty good size."""
         assert isinstance(chunk_size, int) and chunk_size > 0
-        if digest == 'sha512':
-            digest = hashlib.sha512()
-        if digest == 'sha256':
-            digest = hashlib.sha256()
-        elif digest == 'md5':
-            digest = hashlib.md5()
+        # hashlib.new() takes any algorithm it supports and raises a clear
+        # ValueError naming a bad one. The hand-written if/elif ladder this
+        # replaces silently left unknown names as a string and then died with
+        # AttributeError on the first update()
+        hasher = hashlib.new(digest.lower())
         #pylint: disable=invalid-name
         with open(file_path, 'rb') as f:
             for block in iter(lambda: f.read(chunk_size), b''):
-                digest.update(block)
-        checksum = digest.hexdigest()
+                hasher.update(block)
+        checksum = hasher.hexdigest()
         logging.debug("hexdigest of %s is %s" % (file_path, checksum))
         return checksum

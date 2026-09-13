@@ -19,8 +19,7 @@ Pull requests are welcome!
 ### Requirements
 * Python 3
 * [keystoneauth](https://github.com/openstack/keystoneauth)
-* [python-novaclient](https://github.com/openstack/python-novaclient)
-* [python-glanceclient](https://github.com/openstack/python-glanceclient)
+* [openstacksdk](https://github.com/openstack/openstacksdk)
 * [Packer](https://packer.io) 1.7 or newer
 * OpenSSL command line tool
 

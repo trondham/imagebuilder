@@ -61,12 +61,13 @@ selects the method, `sys.argv[2:]` is parsed by that method's own parser, and `b
 7. `parse_manifest()` — Packer's `manifest` post-processor writes `packer-manifest.json` into the temp
    dir; `builds[0].artifact_id` is the resulting Glance image id. This is the only channel by which the
    build result comes back from Packer.
-8. Optional `download_image()` (shells out to `glance image-download`, then **deletes the image from
+8. Optional `download_image()` (via `conn.image.download_image`, then **deletes the image from
    Glance**), optional `--purge-source`, then `cleanup()` + `clean_tmp_files()`.
 
-Three OpenStack clients are used side by side, each region-scoped from the same keystone session:
-novaclient (keypairs), an openstacksdk `Connection` (security groups, networks), glanceclient (image
-delete). Note `self.conn` holds the connection rather than the `conn.network` proxy, because touching
+One openstacksdk `Connection` covers everything: `conn.compute` (keypairs), `conn.network` (security
+groups, networks), `conn.image` (image create, download, delete). novaclient and glanceclient were
+dropped once the last calls moved over. Note `self.conn` holds the connection rather than a proxy
+such as `conn.network`, because touching
 a proxy authenticates and discovers endpoints — the constructor is deliberately free of network
 traffic.
 

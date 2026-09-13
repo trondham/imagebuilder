@@ -4,9 +4,7 @@ import os
 import subprocess
 import time
 import uuid
-from novaclient import client as novaclient
 from openstack.connection import Connection
-from glanceclient import Client as glanceclient
 from .helpers import Helpers as helpers
 
 class BuildFunctions(object):
@@ -31,12 +29,10 @@ class BuildFunctions(object):
         self.template_dir = template_dir
         self.download_dir = download_dir
         self.tmp_dir = helpers.make_tmp_dir()
-        self.nova = novaclient.Client("2", session=session, region_name=region)
         # Only the connection is built here. Reaching for a proxy such as
         # conn.network authenticates and discovers endpoints, so that is left
         # to the call sites to keep this constructor free of network traffic
         self.conn = Connection(session=session, region_name=region)
-        self.glance = glanceclient('2', session=session, region_name=region)
 
     def cleanup(self, secgroup_id, keypair_id):
         """Cleans up the mess we've made
@@ -54,7 +50,7 @@ class BuildFunctions(object):
         if keypair_id:
             logging.info('Removing temporary keypair...')
             try:
-                self.nova.keypairs.delete(key=keypair_id)
+                self.conn.compute.delete_keypair(keypair_id)
             except Exception as error:
                 logging.info("Failed to remove keypair %s: %s" % (keypair_id, error))
 
@@ -62,15 +58,20 @@ class BuildFunctions(object):
         """Creates a temporary keypair"""
 
         keyname = "imagebuilder-" + str(uuid.uuid4().hex)
-        cmd = "/usr/bin/ssh-keygen -b 521 -t ecdsa -N '' -f " + os.path.join(self.tmp_dir, keyname)
-        out = subprocess.call(cmd, shell=True)         # generate temporary ssh key
+        keypath = os.path.join(self.tmp_dir, keyname)
+        # No shell: there is nothing here a shell is needed for, and letting
+        # PATH find ssh-keygen beats hardcoding where it lives
+        cmd = ['ssh-keygen', '-b', '521', '-t', 'ecdsa', '-N', '', '-f', keypath]
+        logging.debug(cmd)
+        out = subprocess.call(cmd)                     # generate temporary ssh key
         if out:                                        # something went wrong with the key generation
             logging.info("Failed to generate SSH key, ssh-keygen exited %s" % out)
             return None, None
         # read public key string and store into Openstack
-        with open(os.path.join(self.tmp_dir, keyname) + ".pub", "r") as pubfile:
-               pubkeystring = pubfile.read().replace('\n', '')
-        keypair = self.nova.keypairs.create(name=keyname, public_key=pubkeystring)
+        with open(keypath + ".pub", "r") as pubfile:
+            pubkeystring = pubfile.read().replace('\n', '')
+        keypair = self.conn.compute.create_keypair(name=keyname,
+                                                   public_key=pubkeystring)
         return keyname, keypair.id
 
     def create_security_group(self):
@@ -91,34 +92,39 @@ class BuildFunctions(object):
         return secgroup_name, secgroup.id
 
     def delete_image(self, image_id):
+        if image_id is None:
+            logging.info('No image to remove')
+            return False
         logging.info('Removing image %s' % image_id)
-        if(image_id is not None):
-            try:
-                logging.info('Removing image %s' % image_id)
-                self.glance.images.delete(image_id)
-                return True
-            except:
-                logging.info('Removing image failed.')
-                return False
+        try:
+            self.conn.image.delete_image(image_id)
+        except Exception as error:
+            logging.info("Removing image %s failed: %s" % (image_id, error))
+            return False
+        return True
 
     def download_image(self, artifact_id):
-        """Downloads image from Glance"""
-        logging.info('Downloading image...')
+        """Downloads image from Glance
+
+        Straight through the API on the session we already hold. Shelling out
+        to the glance CLI meant a second, independent authentication from the
+        OS_* environment, and that CLI is deprecated upstream.
+        """
         timestr = time.strftime("%Y%m%d")
         filename = self.image_name + '-' + timestr + '.qcow2'
-        cmd = ['glance',
-               'image-download',
-               '--file', os.path.join(self.download_dir, filename),
-               artifact_id]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        with process.stdout:
-            helpers.log_subprocess_output(process.stdout)
-        exitcode = process.wait()
-        # Not so pretty but will do for now
-        if exitcode == 0:
-            logging.info('Download successful, deleting from Glance...')
-            self.delete_image(artifact_id)
-        return exitcode
+        target = os.path.join(self.download_dir, filename)
+        logging.info("Downloading image to %s..." % target)
+        try:
+            with open(target, 'wb') as image_file:
+                self.conn.image.download_image(artifact_id, output=image_file)
+        except Exception as error:
+            logging.info("Failed to download image %s: %s" % (artifact_id, error))
+            if os.path.exists(target):
+                os.remove(target)          # don't leave a half-written image behind
+            return 1
+        logging.info('Download successful, deleting from Glance...')
+        self.delete_image(artifact_id)
+        return 0
 
     def find_network_id(self, name):
         # networks() rather than find_network(), which raises on a duplicate

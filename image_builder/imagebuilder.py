@@ -65,7 +65,7 @@ def main():
         print("""Missing environment variable(s): %s
 Please run:
   source <my_openrc>
-and try again.""" % missing.args[0])
+and try again.""" % missing.args[0], file=sys.stderr)
         sys.exit(1)
 
     ib_session = imagebuilder.auth(rc)
@@ -79,7 +79,7 @@ and try again.""" % missing.args[0])
         try:
             template_dir = config.get('main', 'template_dir')
         except:
-            print("Failed to read template_dir from config")
+            print("Failed to read template_dir from config", file=sys.stderr)
             sys.exit(1)
 
     if "IB_DOWNLOAD_DIR" in os.environ:
@@ -88,7 +88,7 @@ and try again.""" % missing.args[0])
         try:
             download_dir = config.get('main', 'download_dir')
         except:
-            print("Failed to read download_dir from config")
+            print("Failed to read download_dir from config", file=sys.stderr)
             sys.exit(1)
 
     if commands.build_args:
@@ -186,8 +186,8 @@ and try again.""" % missing.args[0])
         checksum_url = commands.bootstrap_args.checksum_url
         checksum_digest = commands.bootstrap_args.checksum_digest
         disk_format = commands.bootstrap_args.disk_format
-        min_disk = int(commands.bootstrap_args.min_disk)
-        min_ram = int(commands.bootstrap_args.min_ram)
+        min_disk = commands.bootstrap_args.min_disk
+        min_ram = commands.bootstrap_args.min_ram
 
         if commands.bootstrap_args.verbose:
             logging.basicConfig(format="%(message)s", level=logging.INFO)
