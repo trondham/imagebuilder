@@ -7,8 +7,10 @@ class Helpers(object):
 
     @staticmethod
     def clean_tmp_files(tmp_dir):
+        # Also called from a finally block, so failing to remove a scratch
+        # directory must not be what the user ends up seeing
         logging.info('Removing temporary directory with content...')
-        shutil.rmtree(tmp_dir)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @staticmethod
     def make_tmp_dir():

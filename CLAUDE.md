@@ -68,9 +68,13 @@ Three OpenStack clients are used side by side, each region-scoped from the same 
 novaclient (keypairs), an openstacksdk `Connection` (security groups, networks), glanceclient (image
 delete). Note `self.conn` holds the connection rather than the `conn.network` proxy, because touching
 a proxy authenticates and discovers endpoints — the constructor is deliberately free of network
-traffic. Cleanup is not
-signal-safe — if the process dies mid-build the `imagebuilder-*` security group and keypair are
-orphaned and must be deleted by hand.
+traffic.
+
+Everything after the first OpenStack resource is created runs under a `try/finally`, so `cleanup()` is
+reached on exceptions and on Ctrl-C (SIGINT becomes `KeyboardInterrupt`, which unwinds). `cleanup()` is
+written for that position: it skips ids that are `None` and swallows API errors, because raising there
+would mask the original failure. SIGTERM and SIGKILL still bypass it — verified — so those remain the
+one case that orphans `imagebuilder-*` resources.
 
 **`bootstrap`** (`bootstrap.py:BootstrapFunctions`) — downloads a cloud image from a URL, optionally
 verifies it against a checksum file (substring match of the computed hexdigest in the fetched file), and

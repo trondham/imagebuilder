@@ -56,8 +56,11 @@ image of choice (i.e. centos, ubuntu), -p is the path to your provision script
 and -d downloads the image after it's been built. 
 
 imagebuilder creates a temporary security group and keypair named
-"imagebuilder-<UUID>" which will be deleted after completion. Note that you for
-now will have to delete these manually if the command is not allowed to finish. 
+"imagebuilder-<UUID>" which will be deleted after completion. These are also
+removed if the build fails or you interrupt it with Ctrl-C. A process killed
+outright (SIGTERM, SIGKILL) cannot run its cleanup, so in that case you will
+still have to delete the leftover "imagebuilder-*" security group and keypair
+yourself.
 
 Run `imagebuilder <command> -h` for a complete list of options. 
 

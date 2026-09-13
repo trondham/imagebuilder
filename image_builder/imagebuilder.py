@@ -27,19 +27,32 @@ class ImageBuilder(object):
             sess = session.Session(auth)
         return sess
 
-    @staticmethod
-    def get_openstack_rc():
-        env_var = {}
-        env_var['username'] = os.environ['OS_USERNAME']
-        env_var['project_name'] = os.environ['OS_PROJECT_NAME']
-        env_var['cacert'] = os.environ['OS_CACERT'] if "OS_CACERT" in os.environ else None
-        env_var['password'] = os.environ['OS_PASSWORD']
-        env_var['auth_url'] = os.environ['OS_AUTH_URL']
-        env_var['api_version'] = os.environ['OS_IDENTITY_API_VERSION']
-        env_var['user_domain_name'] = os.environ['OS_USER_DOMAIN_NAME']
-        env_var['project_domain_name'] = os.environ['OS_PROJECT_DOMAIN_NAME']
-        env_var['region_name'] = os.environ['OS_REGION_NAME']
-        env_var['no_cache'] = os.environ['OS_NO_CACHE']
+    # Only what auth() and the region lookup actually consume. Asking for more
+    # than that turns a perfectly good openrc file into a failed login
+    REQUIRED_ENV = {
+        'username': 'OS_USERNAME',
+        'project_name': 'OS_PROJECT_NAME',
+        'password': 'OS_PASSWORD',
+        'auth_url': 'OS_AUTH_URL',
+        'user_domain_name': 'OS_USER_DOMAIN_NAME',
+        'project_domain_name': 'OS_PROJECT_DOMAIN_NAME',
+        'region_name': 'OS_REGION_NAME',
+    }
+
+    @classmethod
+    def get_openstack_rc(cls):
+        """Reads the credentials from the environment
+
+        OS_CACERT is optional. Raises KeyError naming every variable that is
+        missing rather than just the first one found.
+        """
+        missing = [name for name in cls.REQUIRED_ENV.values()
+                   if name not in os.environ]
+        if missing:
+            raise KeyError(', '.join(missing))
+        env_var = {key: os.environ[name]
+                   for key, name in cls.REQUIRED_ENV.items()}
+        env_var['cacert'] = os.environ.get('OS_CACERT')
         return env_var
 
 def main():
@@ -48,11 +61,11 @@ def main():
 
     try:
         rc = imagebuilder.get_openstack_rc()
-    except KeyError:
-        print("""Failed to read environment variables.
+    except KeyError as missing:
+        print("""Missing environment variable(s): %s
 Please run:
   source <my_openrc>
-and try again.""")
+and try again.""" % missing.args[0])
         sys.exit(1)
 
     ib_session = imagebuilder.auth(rc)
@@ -126,31 +139,43 @@ and try again.""")
         logging.info('Creating Packer security group...')
         secgroup_name, secgroup_id = build.create_security_group()
 
-        logging.info('Creating Packer keypair...')
-        key_name, keypair_id = build.create_keypairs()
+        keypair_id = None
+        exitcode = 1
 
-        logging.info('Running Packer...')
-        exitcode = build.run_packer(template_path, secgroup_name, key_name, network_id)
-        if exitcode == 0:
-            artifact_id = build.parse_manifest()
-            logging.info("Successfully created image id %s" % artifact_id)
-            if commands.build_args.download:
-                exitcode = build.download_image(artifact_id)
-            else:
-                exitcode = 0
-        else:
-            logging.info('Build failed')
-            exitcode = 1
+        # From here on something exists in OpenStack, so the rest runs under a
+        # finally. An interrupt during the build, or any exception on the way,
+        # has to still remove the security group and the keypair rather than
+        # leave them behind in the project
+        try:
+            logging.info('Creating Packer keypair...')
+            key_name, keypair_id = build.create_keypairs()
+            if key_name is None:
+                sys.exit(1)
 
-        logging.info('Cleaning up...')
-        build.cleanup(secgroup_id, keypair_id)
-        if commands.build_args.purge_source:
-            if build.delete_image(source_image):
-                logging.info('Successfully deleted source image')
+            logging.info('Running Packer...')
+            exitcode = build.run_packer(template_path, secgroup_name, key_name, network_id)
+            if exitcode == 0:
+                artifact_id = build.parse_manifest()
+                if artifact_id is None:
+                    exitcode = 1
+                else:
+                    logging.info("Successfully created image id %s" % artifact_id)
+                    if commands.build_args.download:
+                        exitcode = build.download_image(artifact_id)
             else:
-                logging.info('Failed to delete source image')
+                logging.info('Build failed')
                 exitcode = 1
-        helpers.clean_tmp_files(build.tmp_dir)
+
+            if commands.build_args.purge_source:
+                if build.delete_image(source_image):
+                    logging.info('Successfully deleted source image')
+                else:
+                    logging.info('Failed to delete source image')
+                    exitcode = 1
+        finally:
+            logging.info('Cleaning up...')
+            build.cleanup(secgroup_id, keypair_id)
+            helpers.clean_tmp_files(build.tmp_dir)
 
         sys.exit(exitcode)
 
