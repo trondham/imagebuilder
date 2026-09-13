@@ -1,17 +1,19 @@
 """The build path: resource lifecycle, manifest handling, image download."""
+import io
 import json
 import os
 import subprocess
+import types
 
 import pytest
 
-from image_builder.helpers import Helpers as helpers
-
+from image_builder import helpers
 
 # --------------------------------------------------------------- keypairs
 
 def test_keygen_failure_reports_rather_than_returning_a_usable_key(build, monkeypatch):
-    monkeypatch.setattr(subprocess, 'call', lambda *a, **k: 1)
+    monkeypatch.setattr(subprocess, 'run',
+                        lambda *a, **k: types.SimpleNamespace(returncode=1))
     name, keypair_id = build.create_keypairs()
     assert name is None and keypair_id is None
 
@@ -19,12 +21,12 @@ def test_keygen_failure_reports_rather_than_returning_a_usable_key(build, monkey
 def test_keygen_runs_without_a_shell_and_off_PATH(build, monkeypatch):
     seen = {}
 
-    def fake_call(cmd, **kwargs):
+    def fake_run(cmd, **kwargs):
         seen['cmd'] = cmd
         seen['kwargs'] = kwargs
-        return 1                      # stop before the key is read back
+        return types.SimpleNamespace(returncode=1)   # stop before the key is read
 
-    monkeypatch.setattr(subprocess, 'call', fake_call)
+    monkeypatch.setattr(subprocess, 'run', fake_run)
     build.create_keypairs()
     assert isinstance(seen['cmd'], list)
     assert seen['cmd'][0] == 'ssh-keygen'
@@ -193,13 +195,21 @@ def test_packer_argv_supplies_every_declared_variable(build, monkeypatch, repo_r
     class FakePopen:
         def __init__(self, cmd, **kwargs):
             captured['cmd'] = cmd
-            self.stdout = open(os.devnull, 'rb')
+            self.stdout = io.BytesIO(b'')
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.stdout.close()
+            return False
 
         def wait(self):
             return 0
 
     monkeypatch.setattr(subprocess, 'Popen', FakePopen)
-    build.run_packer('/tmp/template.pkr.hcl', 'sg-name', 'kp-name', 'net-uuid')
+    build.run_packer(os.path.join(build.template_dir, 'template.pkr.hcl'),
+                     'sg-name', 'kp-name', 'net-uuid')
 
     cmd = captured['cmd']
     assert cmd[:2] == ['packer', 'build']

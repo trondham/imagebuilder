@@ -1,59 +1,56 @@
+import configparser
 import logging
 import os
 import sys
-from keystoneauth1.identity import v3
+
 from keystoneauth1 import session
-from .parsecommands import Commands
-from .build import BuildFunctions
+from keystoneauth1.identity import v3
+
+from . import helpers
 from .bootstrap import BootstrapFunctions
+from .build import BuildFunctions
 from .config import Config
-from .helpers import Helpers as helpers
+from .parsecommands import Commands
 
 log = logging.getLogger(__name__)
 
-class ImageBuilder(object):
-    @staticmethod
-    def auth(rc):
-        auth = v3.Password(auth_url=rc['auth_url'],
+# Only what auth() and the region lookup actually consume. Asking for more than
+# that turns a perfectly good openrc file into a failed login
+REQUIRED_ENV = {
+    'username': 'OS_USERNAME',
+    'project_name': 'OS_PROJECT_NAME',
+    'password': 'OS_PASSWORD',
+    'auth_url': 'OS_AUTH_URL',
+    'user_domain_name': 'OS_USER_DOMAIN_NAME',
+    'project_domain_name': 'OS_PROJECT_DOMAIN_NAME',
+    'region_name': 'OS_REGION_NAME',
+}
+
+
+def auth(rc):
+    """Builds an authenticated keystone session from the settings dict"""
+    password = v3.Password(auth_url=rc['auth_url'],
                            project_name=rc['project_name'],
                            username=rc['username'],
                            password=rc['password'],
                            user_domain_name=rc['user_domain_name'],
                            project_domain_name=rc['project_domain_name'])
-        if rc['cacert'] is not None:
-            sess = session.Session(auth,
-                                   verify=rc['cacert'])
-        else:
-            sess = session.Session(auth)
-        return sess
+    if rc['cacert'] is not None:
+        return session.Session(password, verify=rc['cacert'])
+    return session.Session(password)
 
-    # Only what auth() and the region lookup actually consume. Asking for more
-    # than that turns a perfectly good openrc file into a failed login
-    REQUIRED_ENV = {
-        'username': 'OS_USERNAME',
-        'project_name': 'OS_PROJECT_NAME',
-        'password': 'OS_PASSWORD',
-        'auth_url': 'OS_AUTH_URL',
-        'user_domain_name': 'OS_USER_DOMAIN_NAME',
-        'project_domain_name': 'OS_PROJECT_DOMAIN_NAME',
-        'region_name': 'OS_REGION_NAME',
-    }
+def get_openstack_rc():
+    """Reads the credentials from the environment
 
-    @classmethod
-    def get_openstack_rc(cls):
-        """Reads the credentials from the environment
-
-        OS_CACERT is optional. Raises KeyError naming every variable that is
-        missing rather than just the first one found.
-        """
-        missing = [name for name in cls.REQUIRED_ENV.values()
-                   if name not in os.environ]
-        if missing:
-            raise KeyError(', '.join(missing))
-        env_var = {key: os.environ[name]
-                   for key, name in cls.REQUIRED_ENV.items()}
-        env_var['cacert'] = os.environ.get('OS_CACERT')
-        return env_var
+    OS_CACERT is optional. Raises KeyError naming every variable that is
+    missing rather than just the first one found.
+    """
+    missing = [name for name in REQUIRED_ENV.values() if name not in os.environ]
+    if missing:
+        raise KeyError(', '.join(missing))
+    env_var = {key: os.environ[name] for key, name in REQUIRED_ENV.items()}
+    env_var['cacert'] = os.environ.get('OS_CACERT')
+    return env_var
 
 def configure_logging(args):
     """Sets up logging once for whichever subcommand was chosen
@@ -75,18 +72,17 @@ def configure_logging(args):
 def main():
     commands = Commands()
     configure_logging(commands.build_args or commands.bootstrap_args)
-    imagebuilder = ImageBuilder()
 
     try:
-        rc = imagebuilder.get_openstack_rc()
+        rc = get_openstack_rc()
     except KeyError as missing:
-        print("""Missing environment variable(s): %s
+        print(f"""Missing environment variable(s): {missing.args[0]}
 Please run:
   source <my_openrc>
-and try again.""" % missing.args[0], file=sys.stderr)
+and try again.""", file=sys.stderr)
         sys.exit(1)
 
-    ib_session = imagebuilder.auth(rc)
+    ib_session = auth(rc)
     region = rc['region_name']
 
     config = Config().config
@@ -96,7 +92,7 @@ and try again.""" % missing.args[0], file=sys.stderr)
     else:
         try:
             template_dir = config.get('main', 'template_dir')
-        except:
+        except (configparser.NoSectionError, configparser.NoOptionError):
             print("Failed to read template_dir from config", file=sys.stderr)
             sys.exit(1)
 
@@ -105,7 +101,7 @@ and try again.""" % missing.args[0], file=sys.stderr)
     else:
         try:
             download_dir = config.get('main', 'download_dir')
-        except:
+        except (configparser.NoSectionError, configparser.NoOptionError):
             print("Failed to read download_dir from config", file=sys.stderr)
             sys.exit(1)
 
@@ -120,14 +116,14 @@ and try again.""" % missing.args[0], file=sys.stderr)
 
         build = BuildFunctions(ib_session,
                                region,
-                               image_name,
-                               avail_zone,
-                               flavor,
-                               source_image,
-                               sshuser,
-                               provision_script,
-                               template_dir,
-                               download_dir)
+                               image_name=image_name,
+                               avail_zone=avail_zone,
+                               flavor=flavor,
+                               source_image=source_image,
+                               ssh_user=sshuser,
+                               provision_script=provision_script,
+                               template_dir=template_dir,
+                               download_dir=download_dir)
 
         # Everything that can fail without creating anything in OpenStack is
         # done first, so a bad template or network name doesn't leave a

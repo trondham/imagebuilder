@@ -34,16 +34,17 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Both pinned: ruff 0.16.0 widened the default rule set, and pytest
-          # 9 requires Python 3.10. Bump deliberately.
-          pip install 'ruff==0.15.22' 'pytest==8.4.2'
+          # ruff is unpinned now that pyproject.toml selects rules explicitly,
+          # so a new release cannot widen the set under us. pytest stays pinned
+          # because 9 requires Python 3.10.
+          pip install ruff 'pytest==8.4.2'
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install -e .
       - name: Lint with ruff
         run: |
           # stop the build if there are Python syntax errors or undefined names
-          ruff check --output-format=github --select=E9,F63,F7,F82 --target-version=py39 .
-          # default set of ruff rules with GitHub Annotations
-          ruff check --output-format=github --target-version=py39 .
+          ruff check --output-format=github --select=E9,F63,F7,F82 .
+          # the rule set from pyproject.toml, with GitHub Annotations
+          ruff check --output-format=github .
       - name: Run tests
         run: pytest -q

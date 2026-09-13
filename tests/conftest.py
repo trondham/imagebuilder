@@ -126,7 +126,7 @@ def bootstrap(tmp_path):
 def clean_env(monkeypatch):
     """An environment with every OS_* variable removed."""
     for key in list(os.environ):
-        if key.startswith('OS_') or key.startswith('IB_'):
+        if key.startswith(('OS_', 'IB_')):
             monkeypatch.delenv(key, raising=False)
     return monkeypatch
 

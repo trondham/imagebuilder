@@ -1,8 +1,10 @@
 import logging
 import os
 import urllib.request
+
 from openstack.connection import Connection
-from .helpers import Helpers as helpers
+
+from . import helpers
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +16,7 @@ SOCKET_TIMEOUT = 60
 # Anything smaller than this is an error page, not a cloud image
 MIN_IMAGE_BYTES = 1000
 
-class BootstrapFunctions(object):
+class BootstrapFunctions:
     def __init__(self,
                  session,
                  region):

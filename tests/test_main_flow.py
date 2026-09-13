@@ -3,13 +3,13 @@
 These drive main() with a stand-in BuildFunctions, so they cover the wiring
 between the pieces rather than the pieces themselves.
 """
+import os
 import tempfile
 
 import pytest
+from conftest import FULL_OPENRC
 
 import image_builder.imagebuilder as ib
-
-from conftest import FULL_OPENRC
 
 
 @pytest.fixture
@@ -17,6 +17,7 @@ def run_build(clean_env, monkeypatch):
     """Runs main() for a build, returning (exit code, propagated exception, calls)."""
 
     def run(packer=lambda: 0, keygen_ok=True, manifest='img-uuid', argv=None):
+        scratch = tempfile.mkdtemp(prefix='mainflow-dirs-')
         calls = []
 
         class FakeBuild:
@@ -25,7 +26,7 @@ def run_build(clean_env, monkeypatch):
                 self.image_name = 'img'
 
             def find_template(self):
-                return '/tmp/template.pkr.hcl'
+                return os.path.join(scratch, 'template.pkr.hcl')
 
             def find_network_id(self, name):
                 return 'net-1'
@@ -56,14 +57,14 @@ def run_build(clean_env, monkeypatch):
                 return True
 
             def cleanup(self, secgroup_id, keypair_id):
-                calls.append('cleanup(sg=%s kp=%s)' % (secgroup_id, keypair_id))
+                calls.append(f'cleanup(sg={secgroup_id} kp={keypair_id})')
 
         for key, value in FULL_OPENRC.items():
             clean_env.setenv(key, value)
-        clean_env.setenv('IB_TEMPLATE_DIR', '/tmp')
-        clean_env.setenv('IB_DOWNLOAD_DIR', '/tmp')
+        clean_env.setenv('IB_TEMPLATE_DIR', scratch)
+        clean_env.setenv('IB_DOWNLOAD_DIR', scratch)
         monkeypatch.setattr(ib, 'BuildFunctions', FakeBuild)
-        monkeypatch.setattr(ib.ImageBuilder, 'auth', staticmethod(lambda rc: object()))
+        monkeypatch.setattr(ib, 'auth', lambda rc: object())
         monkeypatch.setattr('sys.argv', argv or
                             ['imagebuilder', 'build', '-n', 'img',
                              '-a', 'bgo-default-1', '-s', 'src', '-u', 'almalinux'])

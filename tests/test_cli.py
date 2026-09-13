@@ -46,7 +46,7 @@ def test_build_args_parse():
     assert commands.build_args.name == 'img'
     assert commands.build_args.flavor == 'm1.small'
     assert commands.build_args.network_name == 'Dualstack'
-    assert commands.bootstrap_args is False
+    assert commands.bootstrap_args is None
 
 
 def test_bootstrap_args_parse_numbers_as_ints():
@@ -55,7 +55,7 @@ def test_bootstrap_args_parse_numbers_as_ints():
                          '-r', '768', '-d', '8', '-f', 'qcow2'])
     assert commands.bootstrap_args.min_ram == 768
     assert commands.bootstrap_args.min_disk == 8
-    assert commands.build_args is False
+    assert commands.build_args is None
 
 
 def test_non_numeric_min_ram_is_rejected_at_parse_time(repo_root):

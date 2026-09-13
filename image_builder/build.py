@@ -4,15 +4,18 @@ import os
 import subprocess
 import time
 import uuid
+
 from openstack.connection import Connection
-from .helpers import Helpers as helpers
+
+from . import helpers
 
 log = logging.getLogger(__name__)
 
-class BuildFunctions(object):
+class BuildFunctions:
     def __init__(self,
                  session,
                  region,
+                 *,
                  image_name,
                  avail_zone,
                  flavor,
@@ -59,18 +62,18 @@ class BuildFunctions(object):
     def create_keypairs(self):
         """Creates a temporary keypair"""
 
-        keyname = "imagebuilder-" + str(uuid.uuid4().hex)
+        keyname = f"imagebuilder-{uuid.uuid4().hex}"
         keypath = os.path.join(self.tmp_dir, keyname)
         # No shell: there is nothing here a shell is needed for, and letting
         # PATH find ssh-keygen beats hardcoding where it lives
         cmd = ['ssh-keygen', '-b', '521', '-t', 'ecdsa', '-N', '', '-f', keypath]
         log.debug(cmd)
-        out = subprocess.call(cmd)                     # generate temporary ssh key
+        out = subprocess.run(cmd, check=False).returncode   # generate temporary ssh key
         if out:                                        # something went wrong with the key generation
             log.error("Failed to generate SSH key, ssh-keygen exited %s", out)
             return None, None
         # read public key string and store into Openstack
-        with open(keypath + ".pub", "r") as pubfile:
+        with open(keypath + ".pub", encoding="utf-8") as pubfile:
             pubkeystring = pubfile.read().replace('\n', '')
         keypair = self.conn.compute.create_keypair(name=keyname,
                                                    public_key=pubkeystring)
@@ -78,7 +81,7 @@ class BuildFunctions(object):
 
     def create_security_group(self):
         """Creates a temporary security group"""
-        secgroup_name = "imagebuilder-" + str(uuid.uuid4().hex)
+        secgroup_name = f"imagebuilder-{uuid.uuid4().hex}"
         secgroup = self.conn.network.create_security_group(
             name=secgroup_name,
             description='Temporary security group for image building')
@@ -113,7 +116,7 @@ class BuildFunctions(object):
         OS_* environment, and that CLI is deprecated upstream.
         """
         timestr = time.strftime("%Y%m%d")
-        filename = self.image_name + '-' + timestr + '.qcow2'
+        filename = f'{self.image_name}-{timestr}.qcow2'
         target = os.path.join(self.download_dir, filename)
         log.info("Downloading image to %s...", target)
         try:
@@ -169,7 +172,7 @@ class BuildFunctions(object):
         """
         manifest_path = os.path.join(self.tmp_dir, 'packer-manifest.json')
         try:
-            with open(manifest_path) as data_file:
+            with open(manifest_path, encoding="utf-8") as data_file:
                 manifest = json.load(data_file)
             return manifest['builds'][0]['artifact_id']
         except (OSError, ValueError, KeyError, IndexError) as error:
@@ -178,17 +181,17 @@ class BuildFunctions(object):
 
     def run_packer(self, template_path, secgroup_name, key_name, network_id):
         """Executes Packer command"""
-        image_name_var = 'image_name=' + self.image_name
-        avail_zone_var = 'availability_zone=' + self.avail_zone
-        secgroup_var = 'security_group=' + secgroup_name
-        sshuser_var = 'ssh_username=' + self.ssh_user
-        keyname_var = 'ssh_keypair_name=' + key_name                           # key as it is named in Openstack
-        keypath_var = 'ssh_key_path=' + os.path.join(self.tmp_dir, key_name)   # the "real" private key
-        flavor_var = 'flavor=' + self.flavor
-        network_var = 'network=' + network_id
-        source_image_var = 'source_image=' + self.source_image
-        provision_script_var = 'provision_script=' + self.provision_script
-        manifest_path_var = 'manifest_path=' + os.path.join(self.tmp_dir, 'packer-manifest.json')
+        image_name_var = f'image_name={self.image_name}'
+        avail_zone_var = f'availability_zone={self.avail_zone}'
+        secgroup_var = f'security_group={secgroup_name}'
+        sshuser_var = f'ssh_username={self.ssh_user}'
+        keyname_var = f'ssh_keypair_name={key_name}'                           # key as it is named in Openstack
+        keypath_var = f'ssh_key_path={os.path.join(self.tmp_dir, key_name)}'   # the "real" private key
+        flavor_var = f'flavor={self.flavor}'
+        network_var = f'network={network_id}'
+        source_image_var = f'source_image={self.source_image}'
+        provision_script_var = f'provision_script={self.provision_script}'
+        manifest_path_var = f"manifest_path={os.path.join(self.tmp_dir, 'packer-manifest.json')}"
         cmd = ['packer', 'build',
                '-color=false',
                '-var', image_name_var,
@@ -204,11 +207,10 @@ class BuildFunctions(object):
                '-var', manifest_path_var,
                template_path]
         log.debug(cmd)
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        with process.stdout:
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as process:
             helpers.log_subprocess_output(process.stdout)
-        exitcode = process.wait()
-        return exitcode
+            return process.wait()
 
     def run_packer_init(self, template_path):
         """Installs the Packer plugins required by the template
@@ -222,7 +224,7 @@ class BuildFunctions(object):
             return 0
         cmd = ['packer', 'init', template_path]
         log.debug(cmd)
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        with process.stdout:
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as process:
             helpers.log_subprocess_output(process.stdout)
-        return process.wait()
+            return process.wait()

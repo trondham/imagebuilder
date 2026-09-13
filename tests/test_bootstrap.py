@@ -7,8 +7,8 @@ import urllib.request
 import pytest
 
 from image_builder import bootstrap as bootstrap_module
+from image_builder import helpers
 from image_builder.bootstrap import BootstrapFunctions
-from image_builder.helpers import Helpers as helpers
 
 HASH = 'a' * 64
 IMAGE = b'x' * 5000
@@ -43,20 +43,20 @@ find = BootstrapFunctions.find_expected_checksum
 
 
 @pytest.mark.parametrize('text,name,expected', [
-    pytest.param('%s  img.qcow2\n' % HASH, 'img.qcow2', HASH, id='coreutils'),
-    pytest.param('%s *img.img\n' % HASH, 'img.img', HASH, id='binary-star'),
-    pytest.param('SHA256 (img.qcow2) = %s\n' % HASH, 'img.qcow2', HASH, id='bsd'),
-    pytest.param('%s  img.qcow2\n' % HASH.upper(), 'img.qcow2', HASH, id='uppercase'),
-    pytest.param('# c\n\n%s  img.qcow2\n' % HASH, 'img.qcow2', HASH, id='comments'),
-    pytest.param('%s  ./images/img.qcow2\n' % HASH, 'img.qcow2', HASH, id='path'),
-    pytest.param('%s  other.qcow2\n' % HASH, 'img.qcow2', None, id='name-absent'),
+    pytest.param(f'{HASH}  img.qcow2\n', 'img.qcow2', HASH, id='coreutils'),
+    pytest.param(f'{HASH} *img.img\n', 'img.img', HASH, id='binary-star'),
+    pytest.param(f'SHA256 (img.qcow2) = {HASH}\n', 'img.qcow2', HASH, id='bsd'),
+    pytest.param(f'{HASH.upper()}  img.qcow2\n', 'img.qcow2', HASH, id='uppercase'),
+    pytest.param(f'# c\n\n{HASH}  img.qcow2\n', 'img.qcow2', HASH, id='comments'),
+    pytest.param(f'{HASH}  ./images/img.qcow2\n', 'img.qcow2', HASH, id='path'),
+    pytest.param(f'{HASH}  other.qcow2\n', 'img.qcow2', None, id='name-absent'),
 ])
 def test_checksum_layouts(text, name, expected):
     assert find(text, name) == expected
 
 
 def test_the_right_line_is_picked_among_several():
-    text = '%s  a.qcow2\n%s  b.qcow2\n' % ('a' * 64, 'b' * 64)
+    text = f"{'a' * 64}  a.qcow2\n{'b' * 64}  b.qcow2\n"
     assert find(text, 'b.qcow2') == 'b' * 64
 
 
@@ -110,25 +110,25 @@ def test_requests_carry_a_timeout(bootstrap, fake_http):
 
 def test_matching_checksum_is_accepted(bootstrap, fake_http):
     digest = hashlib.sha256(IMAGE).hexdigest()
-    fake_http['checksum'] = ('%s  img.qcow2\n' % digest).encode()
+    fake_http['checksum'] = f'{digest}  img.qcow2\n'.encode()
     assert bootstrap.download_and_check(IMAGE_URL, SUM_URL) is not None
 
 
 def test_uppercase_checksum_file_is_accepted(bootstrap, fake_http):
     digest = hashlib.sha256(IMAGE).hexdigest()
-    fake_http['checksum'] = ('%s  img.qcow2\n' % digest.upper()).encode()
+    fake_http['checksum'] = f'{digest.upper()}  img.qcow2\n'.encode()
     assert bootstrap.download_and_check(IMAGE_URL, SUM_URL) is not None
 
 
 def test_mismatched_checksum_is_rejected(bootstrap, fake_http):
-    fake_http['checksum'] = ('%s  img.qcow2\n' % ('f' * 64)).encode()
+    fake_http['checksum'] = f"{'f' * 64}  img.qcow2\n".encode()
     assert bootstrap.download_and_check(IMAGE_URL, SUM_URL) is None
 
 
 def test_hash_listed_under_another_name_still_passes_via_fallback(bootstrap, fake_http):
     """Kept so vendors whose checksum files name things differently still work."""
     digest = hashlib.sha256(IMAGE).hexdigest()
-    fake_http['checksum'] = ('%s  somethingelse.qcow2\n' % digest).encode()
+    fake_http['checksum'] = f'{digest}  somethingelse.qcow2\n'.encode()
     assert bootstrap.download_and_check(IMAGE_URL, SUM_URL) is not None
 
 

@@ -1,6 +1,7 @@
 import argparse
 
-class Commands(object):
+
+class Commands:
 
     def __init__(self, argv=None):
         parser = argparse.ArgumentParser(
@@ -103,5 +104,6 @@ class Commands(object):
                                default=False)
 
         args = parser.parse_args(argv)
-        self.build_args = args if args.command == 'build' else False
-        self.bootstrap_args = args if args.command == 'bootstrap' else False
+        self.command = args.command
+        self.build_args = args if args.command == 'build' else None
+        self.bootstrap_args = args if args.command == 'bootstrap' else None

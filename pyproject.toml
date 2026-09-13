@@ -30,5 +30,32 @@ packages = ["image_builder"]
 version = { attr = "image_builder.__version__" }
 
 [tool.ruff]
+target-version = "py39"
+
+# Selected explicitly so the rule set is this repository's decision rather than
+# whatever ruff currently defaults to. Relying on the default is what broke CI
+# when 0.16.0 widened it.
+lint.select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RET",  # return consistency
+    "C4",   # comprehensions
+    "PIE",  # misc lints
+    "LOG",  # logging misuse
+    "S",    # bandit
+]
+
 # Never enforce `E501` (line length violations).
-lint.ignore = ["E501", "E722"]
+lint.ignore = [
+    "E501",
+    "S310",  # urlopen: the URLs come from the operator running the command
+    "S603",  # subprocess without shell: the argv is built here, not user input
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S603", "S607"]   # asserts and subprocess are the point
