@@ -182,9 +182,43 @@ def test_missing_template_returns_none(build):
     assert build.find_template() is None
 
 
-def test_packer_init_is_skipped_for_a_legacy_template(build):
-    """required_plugins is HCL2 only, so there is nothing for init to do."""
+def test_legacy_template_passes_when_the_plugin_is_already_installed(build, monkeypatch):
+    """required_plugins is HCL2 only, so init has nothing to install from."""
+    monkeypatch.setattr(type(build), 'openstack_plugin_installed',
+                        lambda self: True)
     assert build.run_packer_init('/some/path/template') == 0
+
+
+def test_legacy_template_fails_early_when_the_plugin_is_missing(build, monkeypatch):
+    """Better here than after the security group and keypair exist."""
+    monkeypatch.setattr(type(build), 'openstack_plugin_installed',
+                        lambda self: False)
+    assert build.run_packer_init('/some/path/template') == 1
+
+
+@pytest.mark.parametrize('stdout,expected', [
+    pytest.param('', False, id='nothing-installed'),
+    pytest.param('/home/u/.config/packer/plugins/github.com/hashicorp/openstack/'
+                 'packer-plugin-openstack_v1.1.4_x5.0_linux_amd64\n', True,
+                 id='openstack-present'),
+    pytest.param('/home/u/.config/packer/plugins/github.com/hashicorp/qemu/'
+                 'packer-plugin-qemu_v1.1.0_x5.0_linux_amd64\n', False,
+                 id='other-plugin-only'),
+])
+def test_plugin_detection_reads_the_output_not_the_exit_code(build, monkeypatch,
+                                                             stdout, expected):
+    monkeypatch.setattr(subprocess, 'run',
+                        lambda *a, **k: types.SimpleNamespace(stdout=stdout,
+                                                              returncode=0))
+    assert build.openstack_plugin_installed() is expected
+
+
+def test_missing_packer_binary_is_reported_not_raised(build, monkeypatch):
+    def no_packer(*a, **k):
+        raise FileNotFoundError('packer')
+
+    monkeypatch.setattr(subprocess, 'run', no_packer)
+    assert build.openstack_plugin_installed() is False
 
 
 # ------------------------------------------------------------ packer argv

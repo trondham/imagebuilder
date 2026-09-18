@@ -55,7 +55,9 @@ lint.ignore = [
     "E501",
     "S310",  # urlopen: the URLs come from the operator running the command
     "S603",  # subprocess without shell: the argv is built here, not user input
+    "S607",  # packer and ssh-keygen are deliberately resolved through PATH,
+             # so a virtualenv or a chosen packer build can be picked up
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "S603", "S607"]   # asserts and subprocess are the point
+"tests/*" = ["S101"]   # asserts are the point of a test

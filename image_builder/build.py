@@ -212,16 +212,42 @@ class BuildFunctions:
             helpers.log_subprocess_output(process.stdout)
             return process.wait()
 
+    def openstack_plugin_installed(self):
+        """Whether Packer can already see the openstack builder
+
+        'packer plugins installed' exits 0 whether or not anything is there, so
+        the answer is in the output rather than the status.
+        """
+        try:
+            installed = subprocess.run(['packer', 'plugins', 'installed'],
+                                       capture_output=True, text=True,
+                                       check=False)
+        except OSError as error:
+            log.error("Could not run packer: %s", error)
+            return False
+        log.debug(installed.stdout)
+        return 'openstack' in installed.stdout
+
     def run_packer_init(self, template_path):
         """Installs the Packer plugins required by the template
 
         Packer does not bundle builder plugins anymore, so the openstack
         builder has to be installed before the build. Only HCL2 templates can
-        declare required_plugins, so this is a no-op for a legacy JSON
-        template.
+        declare required_plugins, so for a legacy JSON template there is
+        nothing to install from: all this can do is check that someone already
+        installed it by hand, and say so now rather than let packer fail with
+        'the builder openstack is unknown' once the temporary security group
+        and keypair already exist.
         """
         if not template_path.endswith('.pkr.hcl'):
-            return 0
+            if self.openstack_plugin_installed():
+                return 0
+            log.error("The openstack builder is not installed, and %s is a "
+                      "legacy JSON template so it cannot declare it. Either "
+                      "run 'packer plugins install "
+                      "github.com/hashicorp/openstack', or migrate to "
+                      "template.pkr.hcl", template_path)
+            return 1
         cmd = ['packer', 'init', template_path]
         log.debug(cmd)
         with subprocess.Popen(cmd, stdout=subprocess.PIPE,
